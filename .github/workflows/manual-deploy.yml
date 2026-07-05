@@ -33,40 +33,36 @@ jobs:
       - name: Prepare deployment bundle
         shell: bash
         env:
-          DEPLOY_CODEGRAPH_QDRANT_NETWORK: ${{ secrets.DEPLOY_CODEGRAPH_QDRANT_NETWORK }}
-          DEPLOY_OPSBRAIN_QDRANT_NETWORK: ${{ secrets.DEPLOY_OPSBRAIN_QDRANT_NETWORK }}
           DEPLOY_CODEGRAPH_QDRANT_API_KEY: ${{ secrets.DEPLOY_CODEGRAPH_QDRANT_API_KEY }}
           DEPLOY_OPSBRAIN_QDRANT_API_KEY: ${{ secrets.DEPLOY_OPSBRAIN_QDRANT_API_KEY }}
         run: |
           set -euo pipefail
-          : "${DEPLOY_CODEGRAPH_QDRANT_NETWORK:?set DEPLOY_CODEGRAPH_QDRANT_NETWORK environment secret}"
-          : "${DEPLOY_OPSBRAIN_QDRANT_NETWORK:?set DEPLOY_OPSBRAIN_QDRANT_NETWORK environment secret}"
           : "${DEPLOY_CODEGRAPH_QDRANT_API_KEY:?set DEPLOY_CODEGRAPH_QDRANT_API_KEY environment secret}"
           : "${DEPLOY_OPSBRAIN_QDRANT_API_KEY:?set DEPLOY_OPSBRAIN_QDRANT_API_KEY environment secret}"
-
+          deploy_env="${{ inputs.environment }}"
           bundle_root="${RUNNER_TEMP}/bundle"
-          mkdir -p "${bundle_root}/envs/${{ inputs.environment }}"
+          mkdir -p "${bundle_root}/envs/${deploy_env}" "${bundle_root}/secrets"
           cp compose.yml "${bundle_root}/compose.yml"
-          cp "envs/${{ inputs.environment }}/compose.yml" "${bundle_root}/envs/${{ inputs.environment }}/compose.yml"
-          cp "envs/${{ inputs.environment }}/.env.qdrant" "${bundle_root}/envs/${{ inputs.environment }}/.env.qdrant"
-          cat > "${bundle_root}/envs/${{ inputs.environment }}/.env.deploy" <<EOF
-          MAKEPAD_QDRANT_CODEGRAPH_NETWORK=${DEPLOY_CODEGRAPH_QDRANT_NETWORK}
-          MAKEPAD_QDRANT_OPSBRAIN_NETWORK=${DEPLOY_OPSBRAIN_QDRANT_NETWORK}
-          MAKEPAD_QDRANT_CODEGRAPH_API_KEY=${DEPLOY_CODEGRAPH_QDRANT_API_KEY}
-          MAKEPAD_QDRANT_OPSBRAIN_API_KEY=${DEPLOY_OPSBRAIN_QDRANT_API_KEY}
+          cp "envs/${deploy_env}/.env.qdrant" "${bundle_root}/envs/${deploy_env}/.env.qdrant"
+          cat > "${bundle_root}/secrets/codegraph.env" <<EOF
+          QDRANT__SERVICE__API_KEY=${DEPLOY_CODEGRAPH_QDRANT_API_KEY}
           EOF
+          cat > "${bundle_root}/secrets/opsbrain.env" <<EOF
+          QDRANT__SERVICE__API_KEY=${DEPLOY_OPSBRAIN_QDRANT_API_KEY}
+          EOF
+          chmod 600 "${bundle_root}/secrets/codegraph.env" "${bundle_root}/secrets/opsbrain.env"
 
-      - name: Deploy via Docker Swarm
+      - name: Deploy via standalone Docker Compose
         shell: bash
         env:
           REMOTE_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           REMOTE_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
           REMOTE_USER: ${{ secrets.DEPLOY_SSH_USER }}
           REMOTE_DIR: ${{ secrets.DEPLOY_REMOTE_DIR }}
-          STACK_NAME: ${{ secrets.DEPLOY_STACK_NAME }}
+          REMOTE_CONFIG_DIR: ${{ secrets.DEPLOY_REMOTE_CONFIG_DIR }}
         run: |
           set -euo pipefail
-          : "${REMOTE_HOST:?}" "${REMOTE_USER:?}" "${REMOTE_DIR:?}" "${STACK_NAME:?}"
+          : "${REMOTE_HOST:?}" "${REMOTE_USER:?}" "${REMOTE_DIR:?}"
           if [[ "${REMOTE_USER}" == "root" ]]; then
             echo "DEPLOY_SSH_USER must not be root." >&2
             exit 1
@@ -76,46 +72,43 @@ jobs:
           ssh_opts=(-o StrictHostKeyChecking=accept-new -p "${remote_port}")
           scp_opts=(-o StrictHostKeyChecking=accept-new -P "${remote_port}")
           remote_target="${REMOTE_USER}@${REMOTE_HOST}"
+          remote_config_dir="${REMOTE_CONFIG_DIR:-/etc/makepad/qdrant}"
 
           ssh "${ssh_opts[@]}" "${remote_target}" mkdir -p "${REMOTE_DIR}/envs/${{ inputs.environment }}"
           scp "${scp_opts[@]}" "${bundle_root}/compose.yml" "${remote_target}:${REMOTE_DIR}/compose.yml"
-          scp "${scp_opts[@]}" "${bundle_root}/envs/${{ inputs.environment }}/compose.yml" "${remote_target}:${REMOTE_DIR}/envs/${{ inputs.environment }}/compose.yml"
           scp "${scp_opts[@]}" "${bundle_root}/envs/${{ inputs.environment }}/.env.qdrant" "${remote_target}:${REMOTE_DIR}/envs/${{ inputs.environment }}/.env.qdrant"
-          scp "${scp_opts[@]}" "${bundle_root}/envs/${{ inputs.environment }}/.env.deploy" "${remote_target}:${REMOTE_DIR}/envs/${{ inputs.environment }}/.env.deploy"
 
-          ssh "${ssh_opts[@]}" "${remote_target}" bash -se -- "${REMOTE_DIR}" "${STACK_NAME}" "${{ inputs.environment }}" <<'EOF'
+          ssh "${ssh_opts[@]}" "${remote_target}" bash -se -- "${remote_config_dir}" <<'EOF'
+          set -euo pipefail
+          remote_config_dir=$1
+          sudo install -d -m 700 -o root -g root "${remote_config_dir}"
+          EOF
+          remote_tmp=$(ssh "${ssh_opts[@]}" "${remote_target}" mktemp -d /tmp/makepad-qdrant.XXXXXX)
+          scp "${scp_opts[@]}" "${bundle_root}/secrets/codegraph.env" "${remote_target}:${remote_tmp}/codegraph.env"
+          scp "${scp_opts[@]}" "${bundle_root}/secrets/opsbrain.env" "${remote_target}:${remote_tmp}/opsbrain.env"
+          ssh "${ssh_opts[@]}" "${remote_target}" bash -se -- "${remote_config_dir}" "${remote_tmp}" <<'EOF'
+          set -euo pipefail
+          remote_config_dir=$1
+          remote_tmp=$2
+          cleanup() {
+            rm -rf "${remote_tmp}"
+          }
+          trap cleanup EXIT
+          sudo install -m 600 -o root -g root "${remote_tmp}/codegraph.env" "${remote_config_dir}/codegraph.env"
+          sudo install -m 600 -o root -g root "${remote_tmp}/opsbrain.env" "${remote_config_dir}/opsbrain.env"
+          EOF
+
+          ssh "${ssh_opts[@]}" "${remote_target}" bash -se -- "${REMOTE_DIR}" "${{ inputs.environment }}" <<'EOF'
           set -euo pipefail
           remote_dir=$1
-          stack_name=$2
-          deploy_env=$3
-          env_deploy="${remote_dir}/envs/${deploy_env}/.env.deploy"
-
-          codegraph_network=$(grep '^MAKEPAD_QDRANT_CODEGRAPH_NETWORK=' "${env_deploy}" | tail -n 1 | cut -d= -f2-)
-          opsbrain_network=$(grep '^MAKEPAD_QDRANT_OPSBRAIN_NETWORK=' "${env_deploy}" | tail -n 1 | cut -d= -f2-)
-          codegraph_api_key=$(grep '^MAKEPAD_QDRANT_CODEGRAPH_API_KEY=' "${env_deploy}" | tail -n 1 | cut -d= -f2-)
-          opsbrain_api_key=$(grep '^MAKEPAD_QDRANT_OPSBRAIN_API_KEY=' "${env_deploy}" | tail -n 1 | cut -d= -f2-)
-
-          : "${codegraph_network:?MAKEPAD_QDRANT_CODEGRAPH_NETWORK is missing or empty in ${env_deploy}}"
-          : "${opsbrain_network:?MAKEPAD_QDRANT_OPSBRAIN_NETWORK is missing or empty in ${env_deploy}}"
-          : "${codegraph_api_key:?MAKEPAD_QDRANT_CODEGRAPH_API_KEY is missing or empty in ${env_deploy}}"
-          : "${opsbrain_api_key:?MAKEPAD_QDRANT_OPSBRAIN_API_KEY is missing or empty in ${env_deploy}}"
-
-          docker network inspect "${codegraph_network}" >/dev/null 2>&1 \
-            || docker network create --driver overlay --attachable "${codegraph_network}"
-          docker network inspect "${opsbrain_network}" >/dev/null 2>&1 \
-            || docker network create --driver overlay --attachable "${opsbrain_network}"
-
-          export MAKEPAD_QDRANT_CODEGRAPH_NETWORK="${codegraph_network}"
-          export MAKEPAD_QDRANT_OPSBRAIN_NETWORK="${opsbrain_network}"
-          export MAKEPAD_QDRANT_CODEGRAPH_API_KEY="${codegraph_api_key}"
-          export MAKEPAD_QDRANT_OPSBRAIN_API_KEY="${opsbrain_api_key}"
+          deploy_env=$2
+          docker compose \
+            --env-file "${remote_dir}/envs/${deploy_env}/.env.qdrant" \
+            -f "${remote_dir}/compose.yml" \
+            config --quiet
 
           docker compose \
             --env-file "${remote_dir}/envs/${deploy_env}/.env.qdrant" \
-            --env-file "${env_deploy}" \
             -f "${remote_dir}/compose.yml" \
-            -f "${remote_dir}/envs/${deploy_env}/compose.yml" \
-            config > "${remote_dir}/stack.yml"
-
-          docker stack deploy --compose-file "${remote_dir}/stack.yml" "${stack_name}"
+            up -d
           EOF

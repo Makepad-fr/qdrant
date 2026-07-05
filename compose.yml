@@ -1,22 +1,40 @@
 services:
   codegraph-qdrant:
-    image: qdrant/qdrant:v1.15.5
+    image: ${MAKEPAD_QDRANT_IMAGE:-qdrant/qdrant:v1.15.5}
+    network_mode: host
+    env_file:
+      - ${MAKEPAD_QDRANT_CODEGRAPH_ENV_FILE:-/etc/makepad/qdrant/codegraph.env}
     environment:
-      QDRANT__SERVICE__API_KEY: ${MAKEPAD_QDRANT_CODEGRAPH_API_KEY:?set MAKEPAD_QDRANT_CODEGRAPH_API_KEY}
-    networks:
-      codegraph:
-        aliases:
-          - makepad-qdrant-codegraph
+      QDRANT__SERVICE__HOST: ${MAKEPAD_QDRANT_HOST:-0.0.0.0}
+      QDRANT__SERVICE__HTTP_PORT: ${MAKEPAD_QDRANT_CODEGRAPH_HTTP_PORT:-6333}
+      QDRANT__SERVICE__GRPC_PORT: ${MAKEPAD_QDRANT_CODEGRAPH_GRPC_PORT:-6334}
+      QDRANT__TELEMETRY_DISABLED: ${MAKEPAD_QDRANT_TELEMETRY_DISABLED:-true}
+    volumes:
+      - "${MAKEPAD_QDRANT_CODEGRAPH_DATA_PATH:-/var/lib/makepad/qdrant-codegraph}:/qdrant/storage"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/127.0.0.1/$${QDRANT__SERVICE__HTTP_PORT}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
 
   opsbrain-qdrant:
-    image: qdrant/qdrant:v1.15.5
+    image: ${MAKEPAD_QDRANT_IMAGE:-qdrant/qdrant:v1.15.5}
+    network_mode: host
+    env_file:
+      - ${MAKEPAD_QDRANT_OPSBRAIN_ENV_FILE:-/etc/makepad/qdrant/opsbrain.env}
     environment:
-      QDRANT__SERVICE__API_KEY: ${MAKEPAD_QDRANT_OPSBRAIN_API_KEY:?set MAKEPAD_QDRANT_OPSBRAIN_API_KEY}
-    networks:
-      opsbrain:
-        aliases:
-          - makepad-qdrant-opsbrain
-
-networks:
-  codegraph:
-  opsbrain:
+      QDRANT__SERVICE__HOST: ${MAKEPAD_QDRANT_HOST:-0.0.0.0}
+      QDRANT__SERVICE__HTTP_PORT: ${MAKEPAD_QDRANT_OPSBRAIN_HTTP_PORT:-6343}
+      QDRANT__SERVICE__GRPC_PORT: ${MAKEPAD_QDRANT_OPSBRAIN_GRPC_PORT:-6344}
+      QDRANT__TELEMETRY_DISABLED: ${MAKEPAD_QDRANT_TELEMETRY_DISABLED:-true}
+    volumes:
+      - "${MAKEPAD_QDRANT_OPSBRAIN_DATA_PATH:-/var/lib/makepad/qdrant-opsbrain}:/qdrant/storage"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/127.0.0.1/$${QDRANT__SERVICE__HTTP_PORT}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
