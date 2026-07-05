@@ -1,6 +1,6 @@
 name: Manual Deploy
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       environment:
