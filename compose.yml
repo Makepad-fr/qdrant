@@ -1,7 +1,6 @@
 services:
   codegraph-qdrant:
     image: ${MAKEPAD_QDRANT_IMAGE:-qdrant/qdrant:v1.15.5}
-    network_mode: host
     env_file:
       - ${MAKEPAD_QDRANT_CODEGRAPH_ENV_FILE:-/etc/makepad/qdrant/codegraph.env}
     environment:
@@ -17,11 +16,14 @@ services:
       timeout: 5s
       retries: 6
       start_period: 20s
+    networks:
+      codegraph:
+        aliases:
+          - makepad-qdrant-codegraph
     restart: unless-stopped
 
   opsbrain-qdrant:
     image: ${MAKEPAD_QDRANT_IMAGE:-qdrant/qdrant:v1.15.5}
-    network_mode: host
     env_file:
       - ${MAKEPAD_QDRANT_OPSBRAIN_ENV_FILE:-/etc/makepad/qdrant/opsbrain.env}
     environment:
@@ -37,4 +39,16 @@ services:
       timeout: 5s
       retries: 6
       start_period: 20s
+    networks:
+      opsbrain:
+        aliases:
+          - makepad-qdrant-opsbrain
     restart: unless-stopped
+
+networks:
+  codegraph:
+    external: true
+    name: ${MAKEPAD_QDRANT_CODEGRAPH_NETWORK:?set MAKEPAD_QDRANT_CODEGRAPH_NETWORK}
+  opsbrain:
+    external: true
+    name: ${MAKEPAD_QDRANT_OPSBRAIN_NETWORK:?set MAKEPAD_QDRANT_OPSBRAIN_NETWORK}

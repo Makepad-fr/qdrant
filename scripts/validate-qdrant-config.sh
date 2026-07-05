@@ -43,6 +43,8 @@ for service in ("codegraph-qdrant", "opsbrain-qdrant"):
     require(service in base_compose, f"Base Compose file must define {service}.")
 
 for variable in (
+    "MAKEPAD_QDRANT_CODEGRAPH_NETWORK",
+    "MAKEPAD_QDRANT_OPSBRAIN_NETWORK",
     "MAKEPAD_QDRANT_CODEGRAPH_HTTP_PORT",
     "MAKEPAD_QDRANT_CODEGRAPH_GRPC_PORT",
     "MAKEPAD_QDRANT_OPSBRAIN_HTTP_PORT",
@@ -51,10 +53,15 @@ for variable in (
     "MAKEPAD_QDRANT_OPSBRAIN_DATA_PATH",
 ):
     require(variable in base_compose, f"Base Compose file must use {variable}.")
-    require(variable in canary_env, f"Canary env must define {variable}.")
-    require(variable in production_env, f"Production env must define {variable}.")
+    if variable.endswith("_NETWORK"):
+        require(variable in manual_deploy, f"Manual deploy workflow must handle {variable}.")
+    else:
+        require(variable in canary_env, f"Canary env must define {variable}.")
+        require(variable in production_env, f"Production env must define {variable}.")
 
 for secret in (
+    "DEPLOY_CODEGRAPH_QDRANT_NETWORK",
+    "DEPLOY_OPSBRAIN_QDRANT_NETWORK",
     "DEPLOY_CODEGRAPH_QDRANT_API_KEY",
     "DEPLOY_OPSBRAIN_QDRANT_API_KEY",
 ):
@@ -64,19 +71,25 @@ for secret in (
 require("DEPLOY_SSH_USER=root" in normalized_readme, "README must document that root SSH deploys are rejected.")
 require("DEPLOY_SSH_USER must not be root" in manual_deploy, "Manual deploy workflow must reject root SSH users.")
 require("docker stack deploy" not in manual_deploy, "Manual deploy workflow must not deploy with Docker Swarm.")
-require("docker network create" not in manual_deploy, "Manual deploy workflow must not create overlay networks.")
+require("docker network create" not in manual_deploy, "Manual deploy workflow must not create app-owned networks.")
+require("Required Docker network" in manual_deploy, "Manual deploy workflow must fail clearly when app-owned networks are missing.")
 require("up -d" in manual_deploy, "Manual deploy workflow must use standalone Docker Compose up.")
-require("network_mode: host" in base_compose, "Base Compose file must use host networking.")
+require("network_mode: host" not in base_compose, "Base Compose file must not use host networking.")
+require("external: true" in base_compose, "Base Compose file must use external Docker networks.")
+require("makepad-qdrant-codegraph" in base_compose, "Base Compose file must define the Codegraph alias.")
+require("makepad-qdrant-opsbrain" in base_compose, "Base Compose file must define the Opsbrain alias.")
 require("restart: unless-stopped" in base_compose, "Base Compose file must restart standalone containers unless stopped.")
 require("/etc/makepad/qdrant/codegraph.env" in base_compose, "Base Compose file must read Codegraph API key from /etc.")
 require("/etc/makepad/qdrant/opsbrain.env" in base_compose, "Base Compose file must read Opsbrain API key from /etc.")
 require("QDRANT__SERVICE__API_KEY" in manual_deploy, "Manual deploy workflow must write Qdrant API-key env files.")
-require("QDRANT_URL=http://<db-vm-host>:6333" in readme, "README must document Codegraph Qdrant URL.")
-require("QDRANT_URL=http://<db-vm-host>:6343" in readme, "README must document Opsbrain Qdrant URL.")
+require("QDRANT_URL=http://makepad-qdrant-codegraph:6333" in readme, "README must document Codegraph Qdrant URL.")
+require("QDRANT_URL=http://makepad-qdrant-opsbrain:6333" in readme, "README must document Opsbrain Qdrant URL.")
 require("QDRANT_COLLECTION=document_chunks" in readme, "README must document Opsbrain Qdrant collection.")
 require("Do not expose Qdrant publicly" in readme, "README must warn against public Qdrant exposure.")
 require("Docker Swarm" in readme and "not Docker Swarm stack" in readme, "README must state this is not a Swarm stack.")
 require("standalone Docker Compose" in agents, "AGENTS must document standalone Docker Compose.")
+require("app-owned attachable overlay" in readme, "README must document app-owned attachable overlay network requirements.")
+require("does not create Docker networks" in readme, "README must document that Qdrant deploys do not create app-owned networks.")
 
 for text, label in ((canary_env, "canary env"), (production_env, "production env")):
     require("MAKEPAD_QDRANT_CODEGRAPH_DATA_PATH=" in text, f"{label} must define Codegraph data path.")
@@ -89,6 +102,6 @@ for forbidden in ("change-me", "password123", "replace-this", "secret-api-key"):
     require(forbidden not in readme + base_compose + manual_deploy, f"Repository text must not contain placeholder secret {forbidden}.")
 
 require("qdrant/qdrant:v1.15.5" in base_compose, "Base Compose file must pin the Qdrant image version.")
-require("6333" in production_env and "6343" in production_env, "Production env must use expected Qdrant HTTP ports.")
-require("16333" in canary_env and "16343" in canary_env, "Canary env must use expected Qdrant HTTP ports.")
+require("6333" in production_env, "Production env must use expected Qdrant HTTP ports.")
+require("6333" in canary_env, "Canary env must use expected Qdrant HTTP ports.")
 PY
