@@ -1,0 +1,22 @@
+services:
+  codegraph-qdrant:
+    image: qdrant/qdrant:v1.15.5
+    environment:
+      QDRANT__SERVICE__API_KEY: ${MAKEPAD_QDRANT_CODEGRAPH_API_KEY:?set MAKEPAD_QDRANT_CODEGRAPH_API_KEY}
+    networks:
+      codegraph:
+        aliases:
+          - makepad-qdrant-codegraph
+
+  opsbrain-qdrant:
+    image: qdrant/qdrant:v1.15.5
+    environment:
+      QDRANT__SERVICE__API_KEY: ${MAKEPAD_QDRANT_OPSBRAIN_API_KEY:?set MAKEPAD_QDRANT_OPSBRAIN_API_KEY}
+    networks:
+      opsbrain:
+        aliases:
+          - makepad-qdrant-opsbrain
+
+networks:
+  codegraph:
+  opsbrain:
